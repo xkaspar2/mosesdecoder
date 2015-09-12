@@ -658,7 +658,7 @@ GetTranslationOptionList(size_t sPos, size_t ePos) const
 
 void
 TranslationOptionCollection::
-GetTargetPhraseCollectionBatch()
+GetTargetPhraseCollectionBatch() //Should we paralelize this to lookup all Phrase tables at the same time?
 {
   typedef DecodeStepTranslation Tstep;
   const vector <DecodeGraph*> &dgl = StaticData::Instance().GetDecodeGraphs();

@@ -48,7 +48,14 @@ PhraseDictionary::PhraseDictionary(const std::string &line, bool registerNow)
   : DecodeFeature(line, registerNow)
   , m_tableLimit(20) // default
   , m_maxCacheSize(DEFAULT_MAX_TRANS_OPT_CACHE_SIZE)
+  , m_maxPhraseLength(2000000000) //allow very long phrases if not explicitly set (minimum of this and global settings will be used)
+#ifdef WITH_THREADS
+  , m_maxParallelQueries(0) //don't use threads when not explicitly set
+#endif
 {
+#ifdef WITH_THREADS
+  m_queryThreadPool = boost::shared_ptr<ThreadPool>(new ThreadPool());
+#endif
   m_id = s_staticColl.size();
   s_staticColl.push_back(this);
 }
@@ -120,6 +127,13 @@ SetParameter(const std::string& key, const std::string& value)
     m_filePath = value;
   } else if (key == "table-limit") {
     m_tableLimit = Scan<size_t>(value);
+  } else if (key == "max-paralell-queries") {
+#ifdef WITH_THREADS
+    m_maxParallelQueries = Scan<size_t>(value);
+    m_queryThreadPool->Init(m_maxParallelQueries);
+#endif
+  } else if (key == "max-phrase-length") {
+    m_maxPhraseLength = Scan<size_t>(value);
   } else {
     DecodeFeature::SetParameter(key, value);
   }
@@ -157,21 +171,62 @@ PrefixExists(ttasksptr const& ttask, Phrase const& phrase) const
 }
 
 void
+PhraseDictionary::LookupTask::
+Run()
+{
+  *m_targetPhrases = m_phraseDictionary->GetTargetPhraseCollectionLEGACY(m_phrase);
+}
+
+void
 PhraseDictionary::
 GetTargetPhraseCollectionBatch(const InputPathList &inputPathQueue) const
 {
   InputPathList::const_iterator iter;
-  for (iter = inputPathQueue.begin(); iter != inputPathQueue.end(); ++iter) {
-    InputPath &inputPath = **iter;
+#ifdef WITH_THREADS
+  if(m_maxParallelQueries <= 1 || inputPathQueue.size() <= 1)
+#else
+  if(true)
+#endif
+  {
+    for (iter = inputPathQueue.begin(); iter != inputPathQueue.end(); ++iter) {
+      InputPath &inputPath = **iter;
 
-    // backoff
-    if (!SatisfyBackoff(inputPath)) {
-      continue;
+      // backoff
+      if (!SatisfyBackoff(inputPath)) {
+        continue;
+      }
+
+      const Phrase &phrase = inputPath.GetPhrase();
+      const TargetPhraseCollection *targetPhrases = this->GetTargetPhraseCollectionLEGACY(phrase);
+      inputPath.SetTargetPhrases(*this, targetPhrases, NULL);
     }
-
-    const Phrase &phrase = inputPath.GetPhrase();
-    const TargetPhraseCollection *targetPhrases = this->GetTargetPhraseCollectionLEGACY(phrase);
-    inputPath.SetTargetPhrases(*this, targetPhrases, NULL);
+cout << "used new singlethread code" << endl;
+  } else {
+#ifdef WITH_THREADS
+    //prepare buffers
+    std::vector<TargetPhraseCollection *> targetPhrasesCollectionBuffers(inputPathQueue.size());
+    int bufferPos;
+    //run queries
+    for (iter = inputPathQueue.begin(), bufferPos = 0; iter != inputPathQueue.end(); ++iter, ++bufferPos) {
+      InputPath &inputPath = **iter;
+  
+      // backoff
+      if (!SatisfyBackoff(inputPath)) {
+        targetPhrasesCollectionBuffers[bufferPos] = NULL;
+        continue;
+      }
+  
+      boost::shared_ptr<LookupTask> task;
+      task = boost::shared_ptr<LookupTask>(new LookupTask(this, inputPath.GetPhrase(), const_cast<const TargetPhraseCollection **>(&(targetPhrasesCollectionBuffers[bufferPos]))));
+      m_queryThreadPool->Submit(task);
+    }
+    m_queryThreadPool->Complete();
+    for (iter = inputPathQueue.begin(), bufferPos = 0; iter != inputPathQueue.end(); ++iter, ++bufferPos) {
+      InputPath &inputPath = **iter;
+      inputPath.SetTargetPhrases(*this, targetPhrasesCollectionBuffers[bufferPos], NULL);
+    }
+cout << "used new multithread code" << endl;
+#endif
   }
 }
 

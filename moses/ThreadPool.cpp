@@ -38,6 +38,16 @@ ThreadPool::ThreadPool( size_t numThreads )
   }
 }
 
+ThreadPool::ThreadPool()
+  : m_stopped(false), m_stopping(false), m_queueLimit(0) {}
+
+void ThreadPool::Init( size_t numThreads )
+{
+  for (size_t i = 0; i < numThreads; ++i) {
+    m_threads.create_thread(boost::bind(&ThreadPool::Execute,this));
+  }
+}
+
 void ThreadPool::Execute()
 {
   do {
@@ -75,6 +85,15 @@ void ThreadPool::Submit(boost::shared_ptr<Task> task)
   }
   m_tasks.push(task);
   m_threadNeeded.notify_all();
+}
+
+void ThreadPool::Complete()
+{
+  boost::mutex::scoped_lock lock(m_mutex);
+  //wait for queue to drain.
+  while (!m_tasks.empty() && !m_stopped) {
+    m_threadAvailable.wait(lock);
+  }
 }
 
 void ThreadPool::Stop(bool processRemainingJobs)

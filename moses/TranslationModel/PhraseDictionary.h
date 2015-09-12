@@ -34,6 +34,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 
 #ifdef WITH_THREADS
 #include <boost/thread/tss.hpp>
+#include "moses/ThreadPool.h"
 #else
 #include <boost/scoped_ptr.hpp>
 #include <ctime>
@@ -70,6 +71,19 @@ public:
   **/
 class PhraseDictionary :  public DecodeFeature
 {
+protected:
+  class LookupTask: public Task
+  {
+  public:
+    LookupTask(const PhraseDictionary *phraseDictionary, const Phrase &phrase, const TargetPhraseCollection **targetPhrases) : m_phrase(phrase), m_phraseDictionary(phraseDictionary), m_targetPhrases(targetPhrases) {}
+    void Run();
+  private:
+    const Phrase &m_phrase;
+    const PhraseDictionary *m_phraseDictionary;
+    const TargetPhraseCollection **m_targetPhrases;
+  };
+
+private:
   friend class PhraseDictionaryMultiModelCounts;
   // why is this necessary? that's a derived class, so it should have
   // access to the
@@ -191,6 +205,11 @@ protected:
   CacheColl &GetCache() const;
   size_t m_id;
 
+  size_t m_maxPhraseLength;
+#ifdef WITH_THREADS
+  size_t m_maxParallelQueries;
+  boost::shared_ptr<ThreadPool> m_queryThreadPool; //to let the PhraseTable be constant (and maybe later ThreadPool to be shared)
+#endif
 };
 
 }

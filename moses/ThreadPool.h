@@ -69,9 +69,19 @@ public:
    **/
   explicit ThreadPool(size_t numThreads);
 
+  /**
+   * Construct a thread pool for later configuration.
+   **/
+  ThreadPool();
+
   ~ThreadPool() {
     Stop();
   }
+
+  /**
+   * Configure ThreadPool created with nonparametric constructor.
+   **/
+  void Init(size_t numThreads);
 
   /**
    * Add a job to the threadpool.
@@ -90,6 +100,11 @@ public:
   void SetQueueLimit( size_t limit ) {
     m_queueLimit = limit;
   }
+
+  /**
+   * Wait until all queued jobs have completed.
+   **/
+  void Complete();
 
 private:
   /**
